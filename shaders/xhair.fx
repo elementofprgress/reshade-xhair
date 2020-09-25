@@ -1,13 +1,14 @@
 /**
- * reshade-xhair 1.3.1
- * ReShade Crosshair Shader Overlay
- *
+ * reshade-xhair 1.3.1a
+ * ReShade Crosshair Shader Overlay w/ Dynamic Color
+ * by peelz & elementeofprgress
  *  Copyright 2020 peelz
  */
 
 #include "Reshade.fxh"
 
 #define CATEGORY_GENERAL "General"
+#define CATEGORY_DYNAMIC "Dynamic"
 #define CATEGORY_XHAIR_COMPOSITE "Composite Xhair"
 #define CATEGORY_XHAIR_CROSS "[Cross] Xhair"
 #define CATEGORY_XHAIR_CIRCLE "[Circle] Xhair"
@@ -22,9 +23,104 @@
 #endif
 
 /**
+ * Dynamic Color Settings
+ */
+uniform bool DynamicCrossColorEnabled <
+  ui_category = CATEGORY_DYNAMIC;
+  ui_label = "Enable Dynamic Crosshair Color";
+> = 1;
+
+uniform float fPixelPosX  <
+  ui_category = CATEGORY_DYNAMIC;
+  #if __RESHADE__ < 40000
+    ui_type = "drag";
+  #else
+	ui_type = "slider";
+  #endif
+  ui_min = 0.0; ui_max = BUFFER_WIDTH;
+  ui_label = "X-Position";
+  ui_tooltip = "X-Position of pixle to be sampled. Default automatically gets screen center.";
+  ui_step = 1;
+> = BUFFER_WIDTH / 2;
+
+uniform float fPixelPosY  <
+  ui_category = CATEGORY_DYNAMIC;
+  #if __RESHADE__ < 40000
+    ui_type = "drag";
+  #else
+	ui_type = "slider";
+  #endif
+  ui_min = 0.0; ui_max = BUFFER_HEIGHT;
+  ui_label = "Y-Position";
+  ui_tooltip = "Y-Position of pixle to be sampled. Default automatically gets screen center.";
+  ui_step = 1;
+> = BUFFER_HEIGHT / 2;
+
+uniform float colorOffset <
+  ui_category = CATEGORY_DYNAMIC;
+	#if __RESHADE__ < 40000
+		ui_type = "drag";
+	#else
+		ui_type = "slider";
+	#endif
+  ui_min = 0.0; ui_max = 360.0;
+  ui_label = "Color Offset";
+  ui_tooltip = "Offset of sampled color in degrees (0-360).";
+  ui_step = 1.0;
+> = 180.0;
+
+uniform float saturationThreshold <
+  ui_category = CATEGORY_DYNAMIC;
+	#if __RESHADE__ < 40000
+		ui_type = "drag";
+	#else
+		ui_type = "slider";
+	#endif
+  ui_min = 0.0; ui_max = 1.0;
+  ui_label = "Saturation Threshold";
+  ui_tooltip = "(Default: 0.1)If the saturation of the selected pixle does not reach the saturation threshold the crosshair color falls back to the non-dynamic color.";
+  ui_step = 0.05;
+> = 0.1;
+
+uniform float Vibrance <
+	ui_category = CATEGORY_DYNAMIC;
+	#if __RESHADE__ < 40000
+		ui_type = "drag";
+	#else
+		ui_type = "slider";
+	#endif
+	ui_category = CATEGORY_DYNAMIC;
+	ui_min = -1.0; ui_max = 1.0;
+	ui_tooltip = "Intelligently saturates (or desaturates if you use negative values) the pixels depending on their original saturation.";
+> = 0.15;
+
+uniform float3 VibranceRGBBalance <
+	ui_category = CATEGORY_DYNAMIC;
+	#if __RESHADE__ < 40000
+		ui_type = "drag";
+	#else
+		ui_type = "slider";
+	#endif
+	ui_min = 0.0; ui_max = 10.0;
+	ui_label = "RGB Balance";
+	ui_tooltip = "A per channel multiplier to the Vibrance strength so you can give more boost to certain colors over others.\nThis is handy if you are colorblind and less sensitive to a specific color.\nYou can then boost that color more than the others.";
+> = float3(10.0, 10.0, 10.0);
+
+uniform float TestMulti <
+  ui_category = CATEGORY_DYNAMIC;
+	#if __RESHADE__ < 40000
+		ui_type = "drag";
+	#else
+		ui_type = "slider";
+	#endif
+  ui_min = -1.0; ui_max = 1.0;
+  ui_label = "Test Multi";
+  ui_step = 0.05;
+> = 0.0;
+
+/**
  * General Settings
  */
-
 uniform int OffsetX <
   ui_category = CATEGORY_GENERAL;
   ui_type = "drag";
@@ -312,9 +408,55 @@ uniform bool rightMouseToggle <
 >;
 
 /**
+ * Constants
+ */
+static const float PI = 3.14159265f;
+// static const float Vibrance = 1.0;
+// static const float3 VibranceRGBBalance = float3(10.0, 10.0, 10.0);
+// static const float3 coefLuma = float3(0.212656, 0.715158, 0.072186);
+static const float3 coefLuma = float3(0.353333, 0.353334, 0.353333);
+
+/**
  * Helpers
  */
+float3 getDynamicCrossColor() {
+  float2 pixelCoord = float2(fPixelPosX, fPixelPosY) * BUFFER_PIXEL_SIZE;
+  float3 pixelColor = tex2Dlod(ReShade::BackBuffer, float4(pixelCoord, 0, 0)).xyz;
+  float3 color = pixelColor;
 
+  //color offset from: https://reshade.me/forum/shader-presentation/3639-color-shift-shader
+  float U = cos(colorOffset*PI/180);
+  float W = sin(colorOffset*PI/180);
+  
+  color.r = (.299+.701*U+.168*W)*color.r + (.587-.587*U+.330*W)*color.g + (.114-.114*U-.497*W)*color.b;
+  color.g = (.299-.299*U-.328*W)*color.r + (.587+.413*U+.035*W)*color.g + (.114-.114*U+.292*W)*color.b;
+  color.b = (.299-.3*U+1.25*W)*color.r + (.587-.588*U-1.05*W)*color.g + (.114+.886*U-.203*W)*color.b;
+
+  // borrowed code from Vibrance by Christian Cann Schuldt Jensen ~ CeeJay.dk
+  
+  // float3 coefLuma = float3(0.212656, 0.715158, 0.072186);
+  
+  /*
+  if (Vibrance_Luma)
+  	coefLuma = float3(0.333333, 0.333334, 0.333333);
+  */
+  float luma = dot(coefLuma, color);
+  
+  float max_color = max(color.r, max(color.g, color.b)); // Find the strongest color
+  float min_color = min(color.r, min(color.g, color.b)); // Find the weakest color
+  float color_saturation = max_color - min_color; // The difference between the two is the saturation
+
+  if ((max(pixelColor.r, max(pixelColor.g, pixelColor.b)) - min(pixelColor.r, min(pixelColor.g, pixelColor.b))) < saturationThreshold) {
+	  color = CrossColor;
+	  return color;
+  } else {
+	  // Extrapolate between luma and original by 1 + (1-saturation) - current
+	  float3 coeffVibrance = float3(VibranceRGBBalance * Vibrance);
+      color = lerp(luma, color, 1.0 + (coeffVibrance * (1.0 - (sign(coeffVibrance) * color_saturation))));
+      // color = color * TestMulti;
+      return color;
+  }
+}
 #define BareCrossLength (CrossLength + CrossGap)
 
 #define EULER (0.57721566490153286061)
@@ -360,7 +502,14 @@ uniform int random3 < source = "random"; min = 0; max = 255; >;
  */
 
 void drawCircleXhair(float distCenter, out float4 draw, inout float drawOpacity) {
-  draw = float4(CircleColor, 1.0);
+  if (DynamicCrossColorEnabled) {
+	  float3 DynamicColor = getDynamicCrossColor();
+	  draw = float4(DynamicColor, 1.0);
+  } else {
+	  draw = float4(CircleColor, 1.0);
+  }
+  
+  // draw = float4(CircleColor, 1.0);
   drawOpacity = XhairOpacity;
 
   bool isXhairPixel = int(round(
@@ -371,6 +520,7 @@ void drawCircleXhair(float distCenter, out float4 draw, inout float drawOpacity)
     drawOpacity = 0;
   }
 
+//TODO: Setup dynamic circle outline color.
   if (CircleOutlineEnabled && !isXhairPixel) {
 
     float bareCrosshairInnerRadius = CircleGapRadius;
@@ -402,9 +552,16 @@ void drawCrossXhair(int distX, int distY, out float4 draw, inout float drawOpaci
   int absDistX = abs(distX);
   int absDistY = abs(distY);
 
-  draw = float4(CrossColor, 1.0);
+  if (DynamicCrossColorEnabled) {
+	  float3 DynamicColor = getDynamicCrossColor();
+	  draw = float4(DynamicColor, 1.0);
+  } else {
+	  draw = float4(CrossColor, 1.0);
+  }
+  
+  // draw = float4(CrossColor, 1.0);
   drawOpacity = XhairOpacity;
-
+  
   if (absDistX < absDistY) { // Vertical pixel
 
     bool isXhairPixel = int(round(min(
@@ -467,6 +624,7 @@ void drawCrossXhair(int distX, int distY, out float4 draw, inout float drawOpaci
       drawOpacity = 0;
     }
 
+//TODO: Setup dynamic cross outline color.
     // Check if we should render an outline pixel
     if (CrossOutlineEnabled && !isXhairPixel && absDistX >= CrossGap) {
 
@@ -527,6 +685,7 @@ float4 PS_Xhair(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Targe
     drawCrossXhair(distX, distY, draw, drawOpacity);
   }
 
+//TODO: Setup dynamic dot color.
   if (
     // Dot: Circle
     (DotType == 0 && distCenter <= DotSize) ||
